@@ -74,12 +74,31 @@ export default function Home() {
     setFeedback("");
 
     try {
-      const provider = new BrowserProvider(window.ethereum);
-      const accounts = (await provider.send("eth_requestAccounts", [])) as string[];
-      if (!accounts[0]) {
+      const ethereum = window.ethereum as (WalletProvider & {
+        request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+        enable?: () => Promise<string[]>;
+      }) | undefined;
+      if (!ethereum) {
+        throw new Error("Your wallet disconnected. Reconnect it and try again.");
+      }
+
+      let accounts: string[] | undefined;
+      // Prefer the standard EIP-1193 request method. Fall back to legacy
+      // providers so the app can connect across different browser wallets.
+      if (typeof ethereum.request === "function") {
+        accounts = (await ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      } else if (typeof ethereum.enable === "function") {
+        accounts = await ethereum.enable();
+      } else {
+        const provider = new BrowserProvider(ethereum);
+        accounts = (await provider.send("eth_requestAccounts", [])) as string[];
+      }
+
+      if (!accounts?.[0]) {
         throw new Error("No wallet account was returned. Unlock your wallet and try again.");
       }
 
+      const provider = new BrowserProvider(ethereum);
       const network = await provider.getNetwork();
       setWalletAddress(accounts[0]);
       setChainId(network.chainId.toString());
@@ -110,12 +129,16 @@ export default function Home() {
       setFeedback("");
     };
 
-    ethereum.on("accountsChanged", handleAccountsChanged);
-    ethereum.on("chainChanged", handleChainChanged);
+    if (typeof ethereum.on === "function") {
+      ethereum.on("accountsChanged", handleAccountsChanged);
+      ethereum.on("chainChanged", handleChainChanged);
+    }
 
     return () => {
-      ethereum.removeListener("accountsChanged", handleAccountsChanged);
-      ethereum.removeListener("chainChanged", handleChainChanged);
+      if (typeof ethereum.removeListener === "function") {
+        ethereum.removeListener("accountsChanged", handleAccountsChanged);
+        ethereum.removeListener("chainChanged", handleChainChanged);
+      }
     };
   }, []);
 
